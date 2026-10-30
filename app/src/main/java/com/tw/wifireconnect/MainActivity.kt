@@ -9,6 +9,8 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.os.PowerManager
 import android.provider.Settings
 import android.widget.ArrayAdapter
@@ -23,10 +25,25 @@ class MainActivity : AppCompatActivity() {
     private lateinit var binding: ActivityMainBinding
     private lateinit var prefs: AppPrefs
     private var ssidList: List<String> = emptyList()
+    private val uiHandler = Handler(Looper.getMainLooper())
+    private var statusPollCount = 0
 
     private val statusReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             refreshStatus()
+        }
+    }
+
+    /** 服务异步启动：短轮询直到 isAlive 或超时，避免界面卡在「正在拉起」 */
+    private val statusPollRunnable = object : Runnable {
+        override fun run() {
+            refreshStatus()
+            statusPollCount++
+            if (WifiReconnectService.isAlive || statusPollCount >= 10) {
+                statusPollCount = 0
+                return
+            }
+            uiHandler.postDelayed(this, 300L)
         }
     }
 
@@ -67,12 +84,16 @@ class MainActivity : AppCompatActivity() {
                 if (!saveSettings(showToast = false) && binding.switchEnable.isChecked) {
                     binding.switchEnable.isChecked = false
                 } else if (prefs.enabled) {
-                    refreshStatus("已启用服务")
+                    refreshStatus("已启用，等待服务就绪")
+                    pollServiceStatus()
                 }
             } else {
                 prefs.enabled = false
+                stopStatusPoll()
                 WifiReconnectService.stop(this)
                 refreshStatus("已停止服务")
+                // 停止也是异步的，补两次刷新
+                uiHandler.postDelayed({ refreshStatus() }, 400L)
             }
         }
 
@@ -89,17 +110,30 @@ class MainActivity : AppCompatActivity() {
         if (revived) {
             WifiReconnectService.ensureRunning(this)
             refreshStatus("检测到服务已停止，正在重新拉起")
+            pollServiceStatus()
         } else {
             refreshStatus()
         }
     }
 
     override fun onPause() {
+        stopStatusPoll()
         try {
             unregisterReceiver(statusReceiver)
         } catch (_: Exception) {
         }
         super.onPause()
+    }
+
+    private fun pollServiceStatus() {
+        stopStatusPoll()
+        statusPollCount = 0
+        uiHandler.postDelayed(statusPollRunnable, 200L)
+    }
+
+    private fun stopStatusPoll() {
+        uiHandler.removeCallbacks(statusPollRunnable)
+        statusPollCount = 0
     }
 
     private fun ensurePermissions() {
@@ -190,6 +224,7 @@ class MainActivity : AppCompatActivity() {
 
         if (prefs.enabled) {
             WifiReconnectService.start(this)
+            pollServiceStatus()
         } else {
             WifiReconnectService.stop(this)
         }

@@ -118,6 +118,7 @@ class WifiReconnectService : Service() {
         registerReceiver(wifiReceiver, filter)
         handler.post(pollRunnable)
         WatchdogReceiver.schedule(this)
+        notifyUiStatus()
         Log.i(TAG, "service created")
     }
 
@@ -149,6 +150,7 @@ class WifiReconnectService : Service() {
         }
         startForeground(NOTIFY_ID, buildNotification())
         WatchdogReceiver.schedule(this)
+        notifyUiStatus()
         return START_STICKY
     }
 
@@ -165,6 +167,10 @@ class WifiReconnectService : Service() {
         }
         super.onDestroy()
         Log.i(TAG, "service destroyed")
+        notifyUiStatus()
+    }
+
+    private fun notifyUiStatus() {
         sendBroadcast(Intent(ACTION_STATUS_CHANGED).setPackage(packageName))
     }
 
