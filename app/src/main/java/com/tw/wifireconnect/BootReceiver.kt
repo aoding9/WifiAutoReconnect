@@ -6,10 +6,20 @@ import android.content.Intent
 
 class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent?) {
-        if (intent?.action != Intent.ACTION_BOOT_COMPLETED) return
+        val action = intent?.action ?: return
+        if (action != Intent.ACTION_BOOT_COMPLETED
+            && action != Intent.ACTION_MY_PACKAGE_REPLACED
+            && action != Intent.ACTION_USER_PRESENT
+        ) {
+            return
+        }
         val prefs = AppPrefs(context)
-        if (prefs.enabled && prefs.bootStart) {
+        if (!prefs.enabled) return
+        if (action == Intent.ACTION_BOOT_COMPLETED && !prefs.bootStart) return
+
+        if (!WifiReconnectService.isAlive) {
             WifiReconnectService.start(context)
         }
+        WatchdogReceiver.schedule(context)
     }
 }

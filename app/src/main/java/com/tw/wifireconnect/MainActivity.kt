@@ -84,7 +84,14 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         registerReceiver(statusReceiver, IntentFilter(WifiReconnectService.ACTION_STATUS_CHANGED))
-        refreshStatus()
+        // 配置启用但服务被杀（通知没了）：打开界面时自动拉起
+        val revived = prefs.enabled && !WifiReconnectService.isAlive
+        if (revived) {
+            WifiReconnectService.ensureRunning(this)
+            refreshStatus("检测到服务已停止，正在重新拉起")
+        } else {
+            refreshStatus()
+        }
     }
 
     override fun onPause() {
@@ -204,8 +211,14 @@ class MainActivity : AppCompatActivity() {
             WifiHelper.isConnectedTo(this, prefs.targetSsid)
         val batteryOk = isIgnoringBatteryOptimizations()
 
+        val serviceText = when {
+            !prefs.enabled -> "未启用"
+            WifiReconnectService.isAlive -> "运行中（通知栏应可见）"
+            else -> "已启用但服务未在运行（正在尝试拉起）"
+        }
+
         binding.textStatus.text = buildString {
-            append("服务：").append(if (prefs.enabled) "运行中" else "未启用").append('\n')
+            append("服务：").append(serviceText).append('\n')
             append("开机自启：").append(if (prefs.bootStart) "是" else "否").append('\n')
             append("电池白名单：").append(
                 when (batteryOk) {

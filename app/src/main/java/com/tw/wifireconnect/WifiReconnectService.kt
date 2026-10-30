@@ -107,6 +107,7 @@ class WifiReconnectService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        isAlive = true
         prefs = AppPrefs(this)
         createChannel()
         startForeground(NOTIFY_ID, buildNotification())
@@ -116,13 +117,20 @@ class WifiReconnectService : Service() {
         }
         registerReceiver(wifiReceiver, filter)
         handler.post(pollRunnable)
+        WatchdogReceiver.schedule(this)
         Log.i(TAG, "service created")
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // 被系统重启后也要尽快挂回前台通知
+        if (::prefs.isInitialized.not()) {
+            prefs = AppPrefs(this)
+        }
+        isAlive = true
         when (intent?.action) {
             ACTION_STOP -> {
                 prefs.enabled = false
+                WatchdogReceiver.cancel(this)
                 stopSelfSafe()
                 return START_NOT_STICKY
             }
@@ -135,21 +143,29 @@ class WifiReconnectService : Service() {
             }
         }
         if (!prefs.enabled) {
+            WatchdogReceiver.cancel(this)
             stopSelfSafe()
             return START_NOT_STICKY
         }
         startForeground(NOTIFY_ID, buildNotification())
+        WatchdogReceiver.schedule(this)
         return START_STICKY
     }
 
     override fun onDestroy() {
+        isAlive = false
         handler.removeCallbacksAndMessages(null)
         try {
             unregisterReceiver(wifiReceiver)
         } catch (_: Exception) {
         }
+        // 若仍配置为启用，留下 watchdog 稍后再拉起
+        if (::prefs.isInitialized && prefs.enabled) {
+            WatchdogReceiver.schedule(this)
+        }
         super.onDestroy()
         Log.i(TAG, "service destroyed")
+        sendBroadcast(Intent(ACTION_STATUS_CHANGED).setPackage(packageName))
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -283,6 +299,20 @@ class WifiReconnectService : Service() {
         const val ACTION_REFRESH = "com.tw.wifireconnect.REFRESH"
         const val ACTION_STATUS_CHANGED = "com.tw.wifireconnect.STATUS"
 
+        /** 进程内标记：服务是否存活（被杀后为 false，界面据此纠正「假启用」） */
+        @Volatile
+        var isAlive: Boolean = false
+            private set
+
+        fun ensureRunning(context: Context): Boolean {
+            val prefs = AppPrefs(context)
+            if (!prefs.enabled) return false
+            if (isAlive) return true
+            start(context)
+            WatchdogReceiver.schedule(context)
+            return false
+        }
+
         fun start(context: Context) {
             val intent = Intent(context, WifiReconnectService::class.java)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -293,6 +323,7 @@ class WifiReconnectService : Service() {
         }
 
         fun stop(context: Context) {
+            WatchdogReceiver.cancel(context)
             val intent = Intent(context, WifiReconnectService::class.java).setAction(ACTION_STOP)
             context.startService(intent)
         }
