@@ -8,7 +8,9 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical"
-        android:padding="16dp">
+        android:padding="16dp"
+        android:focusable="true"
+        android:focusableInTouchMode="true">
 
         <com.google.android.material.switchmaterial.SwitchMaterial
             android:id="@+id/switchEnable"
@@ -58,7 +60,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="8dp"
-            android:hint="15"
+            android:hint="3"
             android:inputType="number"
             android:maxLines="1" />
 

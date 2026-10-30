@@ -6,7 +6,6 @@ import android.net.NetworkInfo
 import android.net.wifi.WifiConfiguration
 import android.net.wifi.WifiManager
 import android.os.Build
-import android.os.SystemClock
 
 object WifiHelper {
 
@@ -67,19 +66,29 @@ object WifiHelper {
     }
 
     /**
-     * 强制连接已保存的目标 WiFi。
-     * 1) enableNetwork + reconnect
-     * 2) 失败则开关 WiFi 触发系统重连
+     * 强制连接已保存的目标 WiFi（只 enableNetwork/reconnect，不再开关 WiFi 射频，避免循环开关）。
+     * @param enableRadioIfOff 为 true 时若 WiFi 关闭则只打开一次；不会再关掉。
      */
     @Suppress("DEPRECATION")
-    fun connectSaved(context: Context, targetSsid: String): ConnectResult {
+    fun connectSaved(
+        context: Context,
+        targetSsid: String,
+        enableRadioIfOff: Boolean = false
+    ): ConnectResult {
         val target = normalizeSsid(targetSsid)
         if (target.isEmpty()) return ConnectResult(false, "未设置目标 WiFi")
 
         val wm = wifiManager(context)
         if (!wm.isWifiEnabled) {
-            wm.isWifiEnabled = true
-            SystemClock.sleep(1200)
+            if (!enableRadioIfOff) {
+                return ConnectResult(false, "WiFi 已关闭，跳过重连")
+            }
+            return try {
+                wm.isWifiEnabled = true
+                ConnectResult(true, "已请求打开 WiFi，等待系统连接")
+            } catch (e: Exception) {
+                ConnectResult(false, "打开 WiFi 失败: ${e.message}")
+            }
         }
 
         val configs = try {
@@ -90,35 +99,18 @@ object WifiHelper {
 
         val match = configs.firstOrNull {
             normalizeSsid(it.SSID).equals(target, ignoreCase = true)
-        }
+        } ?: return ConnectResult(false, "未在已保存列表找到「$target」（稍后重试，不开关 WiFi）")
 
-        if (match != null) {
-            try {
-                wm.disconnect()
-                val enabled = wm.enableNetwork(match.networkId, true)
-                val reconnected = wm.reconnect()
-                return ConnectResult(
-                    enabled || reconnected,
-                    "enableNetwork=$enabled reconnect=$reconnected id=${match.networkId}"
-                )
-            } catch (e: Exception) {
-                return ConnectResult(false, "连接异常: ${e.message}")
-            }
-        }
-
-        // 列表里找不到时：开关 WiFi，依赖系统自动加入
-        return toggleWifi(wm, "未在已保存列表找到「$target」，已尝试开关 WiFi")
-    }
-
-    @Suppress("DEPRECATION")
-    private fun toggleWifi(wm: WifiManager, reason: String): ConnectResult {
         return try {
-            wm.isWifiEnabled = false
-            SystemClock.sleep(1500)
-            wm.isWifiEnabled = true
-            ConnectResult(true, reason)
+            // 不先 disconnect：避免人为制造断线广播，加重连抖动
+            val enabled = wm.enableNetwork(match.networkId, true)
+            val reconnected = wm.reconnect()
+            ConnectResult(
+                enabled || reconnected,
+                "enableNetwork=$enabled reconnect=$reconnected id=${match.networkId}"
+            )
         } catch (e: Exception) {
-            ConnectResult(false, "开关 WiFi 失败: ${e.message}")
+            ConnectResult(false, "连接异常: ${e.message}")
         }
     }
 

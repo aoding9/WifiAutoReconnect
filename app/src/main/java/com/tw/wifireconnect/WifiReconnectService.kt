@@ -23,30 +23,59 @@ class WifiReconnectService : Service() {
     private val handler = Handler(Looper.getMainLooper())
     private var reconnectScheduled = false
     private var lastAttemptAt = 0L
+    private var suppressUntil = 0L
     private var lastLog = "服务已启动"
 
     private val wifiReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
-            if (intent?.action != WifiManager.NETWORK_STATE_CHANGED_ACTION) return
-            @Suppress("DEPRECATION")
-            val info = intent.getParcelableExtra<NetworkInfo>(WifiManager.EXTRA_NETWORK_INFO)
-            if (info == null) return
-
-            when (info.detailedState) {
-                NetworkInfo.DetailedState.DISCONNECTED,
-                NetworkInfo.DetailedState.FAILED,
-                NetworkInfo.DetailedState.IDLE -> {
-                    lastLog = "检测到断开: ${info.detailedState}"
-                    scheduleReconnect("state=${info.detailedState}")
+            when (intent?.action) {
+                WifiManager.WIFI_STATE_CHANGED_ACTION -> {
+                    val state = intent.getIntExtra(WifiManager.EXTRA_WIFI_STATE, WifiManager.WIFI_STATE_UNKNOWN)
+                    when (state) {
+                        WifiManager.WIFI_STATE_DISABLED,
+                        WifiManager.WIFI_STATE_DISABLING -> {
+                            // 用户关 WiFi：取消排队，等再次打开再重连，避免抢着开关射频
+                            reconnectScheduled = false
+                            handler.removeCallbacks(reconnectRunnable)
+                            lastLog = "WiFi 已关闭，暂停重连"
+                            updateNotification()
+                        }
+                        WifiManager.WIFI_STATE_ENABLED -> {
+                            lastLog = "WiFi 已打开，检查目标网络"
+                            updateNotification()
+                            scheduleReconnect("wifi_enabled")
+                        }
+                    }
                 }
-                NetworkInfo.DetailedState.CONNECTED -> {
-                    val ssid = WifiHelper.currentSsid(this@WifiReconnectService)
-                    lastLog = "已连接: $ssid"
-                    updateNotification()
-                    reconnectScheduled = false
-                    handler.removeCallbacks(reconnectRunnable)
+                WifiManager.NETWORK_STATE_CHANGED_ACTION -> {
+                    @Suppress("DEPRECATION")
+                    val info = intent.getParcelableExtra<NetworkInfo>(WifiManager.EXTRA_NETWORK_INFO)
+                        ?: return
+                    when (info.detailedState) {
+                        NetworkInfo.DetailedState.DISCONNECTED,
+                        NetworkInfo.DetailedState.FAILED,
+                        NetworkInfo.DetailedState.IDLE -> {
+                            if (!WifiHelper.isWifiEnabled(this@WifiReconnectService)) {
+                                lastLog = "WiFi 已关闭，跳过"
+                                return
+                            }
+                            if (System.currentTimeMillis() < suppressUntil) {
+                                lastLog = "重连冷却中，忽略断开事件"
+                                return
+                            }
+                            lastLog = "检测到断开: ${info.detailedState}"
+                            scheduleReconnect("state=${info.detailedState}")
+                        }
+                        NetworkInfo.DetailedState.CONNECTED -> {
+                            val ssid = WifiHelper.currentSsid(this@WifiReconnectService)
+                            lastLog = "已连接: $ssid"
+                            updateNotification()
+                            reconnectScheduled = false
+                            handler.removeCallbacks(reconnectRunnable)
+                        }
+                        else -> Unit
+                    }
                 }
-                else -> Unit
             }
         }
     }
@@ -58,7 +87,11 @@ class WifiReconnectService : Service() {
                 return
             }
             val target = prefs.targetSsid
-            if (target.isNotEmpty() && !WifiHelper.isConnectedTo(this@WifiReconnectService, target)) {
+            if (target.isNotEmpty()
+                && WifiHelper.isWifiEnabled(this@WifiReconnectService)
+                && !WifiHelper.isConnectedTo(this@WifiReconnectService, target)
+                && System.currentTimeMillis() >= suppressUntil
+            ) {
                 scheduleReconnect("poll_miss")
             }
             val intervalMs = prefs.intervalSec.coerceIn(AppPrefs.MIN_INTERVAL, AppPrefs.MAX_INTERVAL) * 1000L
@@ -77,7 +110,11 @@ class WifiReconnectService : Service() {
         prefs = AppPrefs(this)
         createChannel()
         startForeground(NOTIFY_ID, buildNotification())
-        registerReceiver(wifiReceiver, IntentFilter(WifiManager.NETWORK_STATE_CHANGED_ACTION))
+        val filter = IntentFilter().apply {
+            addAction(WifiManager.NETWORK_STATE_CHANGED_ACTION)
+            addAction(WifiManager.WIFI_STATE_CHANGED_ACTION)
+        }
+        registerReceiver(wifiReceiver, filter)
         handler.post(pollRunnable)
         Log.i(TAG, "service created")
     }
@@ -90,6 +127,7 @@ class WifiReconnectService : Service() {
                 return START_NOT_STICKY
             }
             ACTION_RECONNECT_NOW -> {
+                suppressUntil = 0L
                 attemptReconnect("manual")
             }
             ACTION_REFRESH -> {
@@ -118,7 +156,12 @@ class WifiReconnectService : Service() {
 
     private fun scheduleReconnect(reason: String) {
         if (!prefs.enabled || prefs.targetSsid.isEmpty()) return
+        if (!WifiHelper.isWifiEnabled(this)) {
+            lastLog = "WiFi 关闭中，不排队重连"
+            return
+        }
         if (WifiHelper.isConnectedTo(this, prefs.targetSsid)) return
+        if (System.currentTimeMillis() < suppressUntil) return
 
         val now = System.currentTimeMillis()
         val minGap = prefs.intervalSec.coerceIn(AppPrefs.MIN_INTERVAL, AppPrefs.MAX_INTERVAL) * 1000L
@@ -142,6 +185,11 @@ class WifiReconnectService : Service() {
             updateNotification()
             return
         }
+        if (!WifiHelper.isWifiEnabled(this)) {
+            lastLog = "WiFi 已关闭，等待重新打开"
+            updateNotification()
+            return
+        }
         if (WifiHelper.isConnectedTo(this, target)) {
             lastLog = "已在目标网络，跳过"
             updateNotification()
@@ -149,7 +197,12 @@ class WifiReconnectService : Service() {
         }
 
         lastAttemptAt = System.currentTimeMillis()
-        val result = WifiHelper.connectSaved(this, target)
+        // 冷却：忽略本次重连引发的短暂断开事件，避免连环触发
+        val cooldown = (prefs.intervalSec.coerceIn(AppPrefs.MIN_INTERVAL, AppPrefs.MAX_INTERVAL) * 1000L)
+            .coerceAtLeast(5000L)
+        suppressUntil = lastAttemptAt + cooldown
+
+        val result = WifiHelper.connectSaved(this, target, enableRadioIfOff = false)
         lastLog = "[$reason] ${if (result.ok) "成功" else "失败"}: ${result.detail}"
         Log.i(TAG, lastLog)
         updateNotification()

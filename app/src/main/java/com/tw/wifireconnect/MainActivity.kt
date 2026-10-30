@@ -44,7 +44,7 @@ class MainActivity : AppCompatActivity() {
                 Toast.makeText(this, R.string.hint_ssid, Toast.LENGTH_SHORT).show()
                 return@setOnClickListener
             }
-            val result = WifiHelper.connectSaved(this, prefs.targetSsid)
+            val result = WifiHelper.connectSaved(this, prefs.targetSsid, enableRadioIfOff = true)
             Toast.makeText(
                 this,
                 if (result.ok) getString(R.string.reconnect_ok) else getString(R.string.reconnect_fail),
@@ -57,9 +57,14 @@ class MainActivity : AppCompatActivity() {
         }
 
         binding.switchEnable.setOnCheckedChangeListener { _, checked ->
-            // 仅改 UI；真正生效点保存
-            if (!checked) {
-                // 立刻停服务更直观
+            if (checked) {
+                // 打开即生效：一并写入当前 WiFi/间隔等设置并启动服务
+                if (!saveSettings(showToast = false) && binding.switchEnable.isChecked) {
+                    binding.switchEnable.isChecked = false
+                } else if (prefs.enabled) {
+                    refreshStatus("已启用服务")
+                }
+            } else {
                 prefs.enabled = false
                 WifiReconnectService.stop(this)
                 refreshStatus("已停止服务")
@@ -144,12 +149,13 @@ class MainActivity : AppCompatActivity() {
         refreshStatus()
     }
 
-    private fun saveSettings(showToast: Boolean = true) {
+    /** @return 是否保存成功 */
+    private fun saveSettings(showToast: Boolean = true): Boolean {
         val intervalText = binding.editInterval.text?.toString()?.trim().orEmpty()
         val interval = intervalText.toIntOrNull()
         if (interval == null || interval < AppPrefs.MIN_INTERVAL || interval > AppPrefs.MAX_INTERVAL) {
             Toast.makeText(this, R.string.interval_invalid, Toast.LENGTH_SHORT).show()
-            return
+            return false
         }
 
         val selected = binding.spinnerWifi.selectedItem?.toString().orEmpty()
@@ -162,7 +168,7 @@ class MainActivity : AppCompatActivity() {
         if (binding.switchEnable.isChecked && ssid.isEmpty()) {
             Toast.makeText(this, R.string.hint_ssid, Toast.LENGTH_SHORT).show()
             binding.switchEnable.isChecked = false
-            return
+            return false
         }
 
         prefs.intervalSec = interval
@@ -180,6 +186,7 @@ class MainActivity : AppCompatActivity() {
             Toast.makeText(this, R.string.saved, Toast.LENGTH_SHORT).show()
         }
         refreshStatus("设置已保存")
+        return true
     }
 
     private fun refreshStatus(extra: String? = null) {

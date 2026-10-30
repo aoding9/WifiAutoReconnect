@@ -12,8 +12,8 @@ android {
         minSdk = 23
         // 保持 28：Android 10+ 起普通应用无法可靠开关/强制连接 WiFi
         targetSdk = 28
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 3
+        versionName = "1.0.3"
     }
 
     buildTypes {
