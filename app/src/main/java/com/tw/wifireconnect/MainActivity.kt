@@ -6,7 +6,11 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
+import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.os.PowerManager
+import android.provider.Settings
 import android.widget.ArrayAdapter
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
@@ -38,6 +42,7 @@ class MainActivity : AppCompatActivity() {
 
         binding.btnRefresh.setOnClickListener { loadWifiList(true) }
         binding.btnSave.setOnClickListener { saveSettings() }
+        binding.btnBattery.setOnClickListener { openBatteryWhitelist() }
         binding.btnTest.setOnClickListener {
             saveSettings(showToast = false)
             if (prefs.targetSsid.isEmpty()) {
@@ -190,15 +195,25 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun refreshStatus(extra: String? = null) {
+        refreshBatteryStatus()
+
         val wifiOn = WifiHelper.isWifiEnabled(this)
         val current = WifiHelper.currentSsid(this).ifEmpty { "未连接" }
         val target = prefs.targetSsid.ifEmpty { "未选择" }
         val matched = prefs.targetSsid.isNotEmpty() &&
             WifiHelper.isConnectedTo(this, prefs.targetSsid)
+        val batteryOk = isIgnoringBatteryOptimizations()
 
         binding.textStatus.text = buildString {
             append("服务：").append(if (prefs.enabled) "运行中" else "未启用").append('\n')
             append("开机自启：").append(if (prefs.bootStart) "是" else "否").append('\n')
+            append("电池白名单：").append(
+                when (batteryOk) {
+                    true -> "已加入"
+                    false -> "未加入"
+                    null -> "未知"
+                }
+            ).append('\n')
             append("目标 WiFi：").append(target).append('\n')
             append("重连间隔：").append(prefs.intervalSec).append(" 秒\n")
             append("WiFi 开关：").append(if (wifiOn) "开" else "关").append('\n')
@@ -206,6 +221,56 @@ class MainActivity : AppCompatActivity() {
             append("是否已连目标：").append(if (matched) "是" else "否")
             if (!extra.isNullOrBlank()) {
                 append("\n最近：").append(extra)
+            }
+        }
+    }
+
+    /** true=已不优化；false=仍被优化；null=系统不支持检测 */
+    private fun isIgnoringBatteryOptimizations(): Boolean? {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return null
+        val pm = getSystemService(PowerManager::class.java) ?: return null
+        return pm.isIgnoringBatteryOptimizations(packageName)
+    }
+
+    private fun refreshBatteryStatus() {
+        when (isIgnoringBatteryOptimizations()) {
+            true -> {
+                binding.textBattery.text = getString(R.string.battery_ok)
+                binding.btnBattery.text = getString(R.string.battery_open_list)
+            }
+            false -> {
+                binding.textBattery.text = getString(R.string.battery_need)
+                binding.btnBattery.text = getString(R.string.battery_set)
+            }
+            null -> {
+                binding.textBattery.text = getString(R.string.battery_unsupported)
+                binding.btnBattery.text = getString(R.string.battery_open_list)
+            }
+        }
+    }
+
+    private fun openBatteryWhitelist() {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M
+                && isIgnoringBatteryOptimizations() == false
+            ) {
+                // 弹系统「允许忽略电池优化」对话框
+                startActivity(
+                    Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
+                        .setData(Uri.parse("package:$packageName"))
+                )
+            } else {
+                // 已加入或无法检测：打开系统电池优化列表，方便核对
+                startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+            }
+        } catch (_: Exception) {
+            try {
+                startActivity(
+                    Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+                        .setData(Uri.parse("package:$packageName"))
+                )
+            } catch (_: Exception) {
+                Toast.makeText(this, R.string.battery_unsupported, Toast.LENGTH_SHORT).show()
             }
         }
     }

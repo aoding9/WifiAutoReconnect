@@ -18,4 +18,10 @@
     <string name="reconnect_ok">已发起重连</string>
     <string name="reconnect_fail">重连失败：未找到已保存的该 WiFi</string>
     <string name="interval_invalid">间隔请填写 3～3600 之间的整数</string>
+    <string name="battery_title">电池白名单</string>
+    <string name="battery_ok">状态：已加入（不优化）</string>
+    <string name="battery_need">状态：未加入（系统可能限制后台）</string>
+    <string name="battery_set">设置电池不优化</string>
+    <string name="battery_open_list">打开系统电池优化列表</string>
+    <string name="battery_unsupported">当前系统不支持此项检测</string>
 </resources>
