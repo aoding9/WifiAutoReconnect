@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">WiFi自动重连</string>
+    <string name="enable_service">启用自动重连</string>
+    <string name="boot_start">开机自启</string>
+    <string name="target_wifi">目标 WiFi</string>
+    <string name="refresh_wifi">刷新列表</string>
+    <string name="interval_sec">重连间隔（秒）</string>
+    <string name="save">保存设置</string>
+    <string name="test_now">立即重连一次</string>
+    <string name="status_title">当前状态</string>
+    <string name="hint_ssid">请先选择目标 WiFi</string>
+    <string name="notification_title">WiFi 自动重连运行中</string>
+    <string name="notification_watching">监听断线并自动连接：%1$s</string>
+    <string name="notification_idle">已启用，等待选择 WiFi</string>
+    <string name="saved">已保存</string>
+    <string name="need_location">读取/扫描 WiFi 需要定位权限</string>
+    <string name="reconnect_ok">已发起重连</string>
+    <string name="reconnect_fail">重连失败：未找到已保存的该 WiFi</string>
+    <string name="interval_invalid">间隔请填写 3～3600 之间的整数</string>
+</resources>
