@@ -29,7 +29,7 @@ class AppPrefs(context: Context) {
         const val KEY_BOOT = "boot_start"
         const val KEY_SSID = "target_ssid"
         const val KEY_INTERVAL = "interval_sec"
-        const val DEFAULT_INTERVAL = 15
+        const val DEFAULT_INTERVAL = 3
         const val MIN_INTERVAL = 3
         const val MAX_INTERVAL = 3600
     }
